@@ -4,6 +4,11 @@ a future contextual/nested session may use a richer PreparedProgram contract.
 """
 from typing import Protocol
 
+# Optional interval_predicate(lo, hi) hook:
+# A case may return a predicate for exactly that contiguous original-path span,
+# evaluated under enclosing first-match entry conditions; None means fallback.
+# The same hook is used by dispatch and the pair generator. Predicates with side
+# effects or unknown context require a different, explicitly legal adapter.
 class Case(Protocol):
     name:str
     case_key:str

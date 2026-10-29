@@ -28,7 +28,7 @@ class CompositionalSession:
         left,right=self.group(t.left),self.group(t.right)
         if left is None or right is None:self.groups[t.key]=None;return None
         d=self.out/'trees'/hashlib.sha256(t.key.encode()).hexdigest()[:16]
-        record={'history':t.key,'left_sha':left['sha256'],'right_sha':right['sha256'],'generation_similarity_threshold':0.0}
+        record={'history':t.key,'left_sha':left['sha256'],'right_sha':right['sha256'],'generation_similarity_threshold':0.0,'merge_cleanup':getattr(self.generator,'cleanup','unspecified')}
         try:
             result=self.generator.merge(self.case.case_key,left,right,d);record['status']='accepted' if result else 'rejected_no_meld'
         except Exception as e:
@@ -43,7 +43,9 @@ class CompositionalSession:
         src=c['hp']
         for g in groups:src+=f'extern "C" __device__ void {g["name"]}({args});\n'
         src+=f'extern "C" __device__ __attribute__((always_inline)) void {self.case.helper}({args}) {{\n'
-        for i,g in enumerate(groups):src+=(('if' if i==0 else 'else if')+' ('+conds[g['hi']]+') ' if conds[g['hi']] else '')+f'{{{g["name"]}({passed});return;}}\n'
+        for i,g in enumerate(groups):
+            condition=self.case.interval_predicate(g['lo'],g['hi']) if hasattr(self.case,'interval_predicate') else conds[g['hi']]
+            src+=(('if' if i==0 else 'else if')+' ('+condition+') ' if condition else '')+f'{{{g["name"]}({passed});return;}}\n'
         src+='}\n';ir=G.compile_src(d,'dispatch',src,self.case.case_key)
         G.command(d,'link',[G.T/'llvm-link',c['kernel_ir'],ir,*[g['module'] for g in groups],'-S','-o',d/'linked.ll'])
         # Same ordinary optimization for before/after cost scope. Preserve helper as root.

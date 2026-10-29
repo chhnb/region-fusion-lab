@@ -14,6 +14,8 @@ Structure and semantics
   by score in one priority queue; depth does not affect priority.
 * Binary parentheses in logs represent pair-operation history, not region depth.
 * The reference scheduler refreshes all candidates after every commit.
+* Intermediate fusion results use minimal cleanup by default; final O3 is shared.
+  --merge-cleanup o3 retains the old per-step policy as an explicit experiment.
 * Exhaustive search partitions contiguous intervals, then enumerates chronological
   adjacent merge schedules. Every interval must fully merge; failures are infeasible.
 * Legality belongs to the generator; high scores cannot override generation failure.

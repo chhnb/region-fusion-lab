@@ -1,4 +1,4 @@
-import unittest
+import unittest,tempfile
 from pathlib import Path
 from unittest.mock import patch
 from cases.registry import load
@@ -18,6 +18,22 @@ class Modules(unittest.TestCase):
                 cmd=command.call_args.args[2]
                 self.assertIn('-run-cfmelding-on-function=another_kernel',cmd)
                 self.assertEqual('-run-branch-fusion-only' in cmd,name=='bf')
+    def test_pair_generator_defaults_to_minimal_cleanup(self):
+        gen=generator('darm')
+        gen.bindings=(Path('/unused'),'test',{},'');gen.case=object()
+        with patch('vendor.engine.merge') as merge:
+            gen.merge('test',{}, {},Path('/out'))
+            self.assertEqual(merge.call_args.kwargs['cleanup_mode'],'minimal')
+    def test_minimal_cleanup_has_no_o3(self):
+        from vendor import engine as G
+        with tempfile.TemporaryDirectory() as tmp:
+            d=Path(tmp);source=d/'input.ll'
+            source.write_text('define void @f() {\nentry:\n  ret void\n}\n')
+            with patch('vendor.engine.command') as command:
+                G.cleanup(d,source,'f',mode='minimal')
+                cmd=command.call_args.args[2]
+                self.assertIn('-simplifycfg',cmd);self.assertIn('-verify',cmd)
+                self.assertNotIn('-O3',cmd)
     def test_case_plugin(self):
         self.assertEqual(load('cases.srad.case:SRAD4').name,'srad4')
     def test_generic_session_has_no_case_names(self):

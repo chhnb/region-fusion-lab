@@ -53,29 +53,33 @@ def compile_src(d,label,src,case):
     command(d,label+'-prep',[T/'opt',d/(label+'-front.ll'),*(['-mem2reg','-instcombine'] if low else []),'-verify','-S','-o',d/(label+'.ll')])
     return d/(label+'.ll')
 
-def cleanup(d,source,name,label='after'):
+def cleanup(d,source,name,label='after',mode='o3'):
+    # Default O3 is for initial leaf preparation. merge() explicitly supplies
+    # its separate cleanup policy, which defaults to minimal.
     text=Path(source).read_text()
     for f in re.findall(r'^define[^\n]*@([^ (]+)\(',text,re.M):
         if f==name or f.startswith('guard_'):text=inline(text,f)
     p=d/(label+'-inline.ll');p.write_text(text)
-    command(d,label,[T/'opt',p,'-always-inline','-O3','-internalize','-internalize-public-api-list='+name,'-globaldce','-verify','-S','-o',d/(label+'.ll')])
+    if mode not in ('minimal','o3'):raise ValueError('unknown cleanup mode: '+mode)
+    passes=['-simplifycfg'] if mode=='minimal' else ['-O3']
+    command(d,label,[T/'opt',p,'-always-inline',*passes,'-internalize','-internalize-public-api-list='+name,'-globaldce','-verify','-S','-o',d/(label+'.ll')])
     return d/(label+'.ll')
 
 def record(a,b,p):
     name=f'g_{a}_{b}';return dict(lo=a,hi=b,module=str(p),name=name,sha256=sha(p),costs=costs(p,name))
 
-def merge(case,a,b,d):
+def merge(case,a,b,d,guard=None,cleanup_mode='minimal'):
     s=SPECS[case];assert a['hi']+1==b['lo'];d.mkdir()
-    name=f'g_{a["lo"]}_{b["hi"]}';g=f'guard_{a["hi"]}';argtype=s.get('guard_args',s['args'].split(',')[0])
+    name=f'g_{a["lo"]}_{b["hi"]}';g=guard['name'] if guard else f'guard_{a["hi"]}';argtype=s.get('guard_args',s['args'].split(',')[0])
     src=prefix(case)+f'extern "C" __device__ {s["ret"]} {a["name"]}({s["args"]});\nextern "C" __device__ {s["ret"]} {b["name"]}({s["args"]});\nextern "C" __device__ bool {g}({argtype});\n'
     def invoke(n):return (f'{n}({s["passed"]});return;' if s['ret']=='void' else f'return {n}({s["passed"]});')
     src+=f'extern "C" __device__ {s["ret"]} {name}({s["args"]}) {{if ({g}({s["arg"]})) {{{invoke(a["name"])}}} else {{{invoke(b["name"])}}}}}\n'
     wrapper=compile_src(d,'parent',src,case)
-    command(d,'link',[T/'llvm-link',wrapper,a['module'],b['module'],O/case/'guards'/str(a['hi'])/'guard.ll','-S','-o',d/'linked.ll'])
+    command(d,'link',[T/'llvm-link',wrapper,a['module'],b['module'],guard['module'] if guard else O/case/'guards'/str(a['hi'])/'guard.ll','-S','-o',d/'linked.ll'])
     command(d,'inline',[T/'opt',d/'linked.ll','-always-inline','-simplifycfg','-verify','-S','-o',d/'before.ll'])
     p=command(d,'meld',[O/'engine/opt-adjacent',d/'before.ll','-cfmelder','-cfmelder-entry-only','-run-cfmelding-once','-run-cfmelding-on-function='+name,'-cf-merging-similarity-threshold=0.0','-verify','-S','-o',d/'meld.ll'])
     if 'ADJACENT_ENTRY_MELD_SUCCESS' not in p.stderr:return None
     assert p.stderr.count('ADJACENT_ENTRY_MELD_SUCCESS')==1
-    after=cleanup(d,d/'meld.ll',name)
+    after=cleanup(d,d/'meld.ll',name,mode=cleanup_mode)
     assert not re.search(r'\bcall\b[^\n]*@guard_',function(after.read_text(),name))
     return record(a['lo'],b['hi'],after)

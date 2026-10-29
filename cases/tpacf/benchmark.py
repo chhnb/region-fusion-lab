@@ -9,7 +9,8 @@ def compare(run,args):
     if args.size!=N:raise ValueError('TPACF preserves LOG2_GRID_SIZE14: --size must be16384; small grids are included in validation')
     d=Path(run);out=d/'comparison';out.mkdir(exist_ok=False);arts=json.loads((d/'artifacts.json').read_text())
     names=[];aliases={};seen={}
-    for name in ['original','unmerged','greedy','bf','darm','source_original']+[n for n in arts if n.startswith('enum')]:
+    preferred=['original','unmerged','greedy','bf','darm','source_original']
+    for name in preferred+[n for n in arts if n not in preferred and n!='native']:
         if name not in arts:continue
         identity=arts[name]['sha256']
         if identity in seen:aliases[name]=seen[identity]

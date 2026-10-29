@@ -1,0 +1,110 @@
+TPACF：逐次融合后执行 O3 的影响（2026-10-29）
+
+结论
+逐轮O3确实改变了后续DARM能匹配的结构。它做的是语义保持优化，但不保证
+保留未来融合机会。移除逐轮O3、保留最后统一O3，能让同一平衡合并顺序完成32路。
+这不意味着任意贪心顺序都能全合并，也不意味着全合并一定更快。
+
+一、先隔离另外一个已经修复的问题
+v1适配器把p0..pk累计条件塞进每个组。独立helper缺少前缀已失败的上下文，
+造成额外条件与不同CFG，阻断[R4,R5]+[R6,R7]。现已改为区间内条件pa..pk；
+根分发和内部合并使用同一规则，guard缓存包含lo与hi。无llvm.assume、无单调性假设。
+下面的O3实验两侧均已修复这个问题，不能把这两个因素混在一起。
+
+二、控制变量
+同一初始叶IR、同一binbounds读取、同一配对生成器、同一阈值0、同一平衡相邻顺序。
+只改变每次融合后cleanup：
+  o3：always-inline + O3 + internalize/globaldce + verify。
+  minimal：always-inline + simplifycfg + internalize/globaldce + verify。
+两侧生成最终kernel时都照常执行同一O3、llc、ptxas；初始前端准备也相同。
+BF/DARM自动基线不使用外层贪心。这里不是作者完整kernel原生调度的复现。
+
+三、定位到的具体IR变化
+R30执行accum+(4<<shift)，R31返回accum。DARM初次合并后（省略被外层select屏蔽的undef）：
+  select(p30, accum+(4<<shift), accum)
+Early CSE先清理嵌套select，InstCombine（日志名Combine redundant instructions）改写为：
+  accum + select(p30, 4<<shift, 0)
+两式对这些无副作用整数操作等价；但指令顺序由shl/add/select变成shl/select/add。
+下一轮Smith-Waterman式指令对齐看到的序列已经不同。
+
+实际[g28..31]的原始meld结果，在两种逐轮策略下已经不同：
+  o3子组输入：2条shl、8条select、1条add。
+  minimal子组输入：1条shl、7条select、1条add。
+所以影响不只发生在当前cleanup，也传递到了下一轮匹配与共享结果。
+
+对同一个o3路径的g28..31进行LLVM逐pass转储：
+  guard内联后：3个BB、1条条件br。
+  第一次Jump Threading后：4个BB、2条条件br。
+  后续Jump Threading后：5个BB、2条条件br，并一度有3条shl。
+  ADCE后：仍为5个BB、2条条件br，删除死计算后留下2条shl。
+Jump Threading利用前驱已知条件分裂/复制路径，把选择的数据流改造成了新的控制流。
+不能把guard内联本来产生的分支也全归因于O3；这里明确比较内联之后的变化。
+
+四、为什么后续融合失败
+完成四路子组后：
+                    [24..27]              [28..31]
+逐轮O3              4个BB、2个条件br        5个BB、2个条件br
+minimal             3个BB、1个条件br        3个BB、1个条件br
+原生区域比较器要求可建立一致的CFG对应关系。O3两侧结构不一致，下一步返回
+Number of aligned region pairs:0。外层opcode重叠分数仍约0.437，不是阈值太高。
+minimal对应分数约0.492，匹配成功，并最终完成31次融合，得到覆盖R0..R31的一个组。
+注意“一个组”不等于“一个基本块”，内部未匹配片段仍可能保留条件执行。
+
+五、分组顺序与O3必须分开
+固定平衡顺序：O3无法完成，minimal可以完成。
+当前真实贪心：O3提交29次、剩3组；minimal提交30次、剩2组[R0..R9]与[R10..R31]。
+初始配对除最后一对外都为0.5；当前同分按文本ID排序，会先处理R10而非R2。
+本次未暗中修改tie-break，因而剩余顺序效应仍然存在。
+外层opcode重叠分数不是DARM内部CFG匹配成功的保证，也不是实际运行周期预测。
+
+六、最终性能：固定同一个分区，避免把搜索结果改变当作纯O3效果
+固定分区：[0..7] [8..15] [16..23] [24..27] [28..31]。
+两侧都完成该分区内相同的27次融合，且最终均执行O3。
+输入：seed20261021合成球面点+声明的分箱边界，不是官方天文数据。
+16384点，原始网格/线程/共享内存配置；仅测kernel，不含histogram和完整应用。
+两个独立CUDA context，各2个平衡轮换block，每个版本每kernel24样本。
+SM/显存采样1800/7000MHz。所有正式样本保留；NCU与计时分开。
+
+                         ACFKernel              ACFKernelSymm
+未融合公共对照中位数      38.52ms                19.53ms
+固定分区、逐轮O3         91.82ms                30.70ms
+固定分区、minimal        61.60ms                30.77ms
+minimal相对O3配对加速    1.492x                 0.992x
+两context加速比          1.4921/1.4924          0.9983/0.9860
+ACFKernel改善约49%（加速比口径），但仍比未融合慢；Symm没有改善。
+以上不是全局最优或跨输入结论。
+
+真实贪心（分组也随cleanup改变，因此不是纯局部效果）：
+ACFKernel：minimal相对O3约1.160x。
+ACFKernelSymm：约0.847x，反而更慢。
+平衡全32路minimal：ACF约131.63ms，Symm约65.48ms，约为未融合耗时的3.4倍。
+因此不能用“融合成功数”作为性能目标。
+
+七、NCU证据（单独采集）
+ACFKernel                warp动态指令       动态分歧目标计数    每线程寄存器
+未融合                   274512124          34736712            28
+固定分区、逐轮O3        1120447146          43470699           147
+固定分区、minimal        593799595          35262311           142
+平衡全32路minimal       1604056324          37779018           139
+
+Symm固定分区：逐轮O3为343109996条warp指令、25180766次分歧、28寄存器；
+minimal为285688051条warp指令、21345275次分歧、28寄存器。
+但branch指令从86401511增加到97402059，时间没有同步改善。
+这些计数证明最终执行工作与资源开销也改变了；不能只看IR指令数或分歧数，
+也不能仅凭这些汇总计数唯一确定延迟瓶颈。
+
+八、正确性与证据位置
+所有正式比较产物均通过小网格CPU oracle、保护区、NaN/Inf/相邻阈值、
+覆盖全部分箱、乱序边界，以及两个kernel完整网格NVCC逐字检查。
+默认minimal下SRAD也通过CPU/NVCC检查。此次没有修改LLVM融合器源码。
+
+本地证据（不上传产物）：
+ runs/tpacf-o3-audit-v3：逐pass转储、InstCombine/Jump Threading前后IR。
+ runs/tpacf-o3-controlled-v3/audit.json：固定顺序生成记录。
+ runs/tpacf-o3-controlled-v3/comparison：正式隔离计时、验证、全部样本。
+ runs/tpacf-o3-controlled-v3/ncu：原始报告与计数。
+ comparison-concurrent-validation-not-used：早先与另一个GPU验证任务同时启动的样本，
+ 因未记录阶段重叠而整轮排除，不用于结论；原始数据未删除。
+
+默认策略现在为--merge-cleanup minimal；--merge-cleanup o3用于显式对照。
+移除逐轮O3修正的是搜索阶段安排，不代表最终成本模型已经解决。

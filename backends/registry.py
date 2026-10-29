@@ -1,8 +1,8 @@
 from .darm import DARM,DARMGenerator
 from .bf import BranchFusion
 
-def generator(name):
-    if name=='darm':return DARMGenerator()
+def generator(name,cleanup='minimal'):
+    if name=='darm':return DARMGenerator(cleanup=cleanup)
     raise ValueError('unknown pair generator: '+name)
 
 def method(name):
