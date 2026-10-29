@@ -1,0 +1,4 @@
+# Preserve imported benchmark and license text exactly as supplied.
+cases/srad/srad_kernel.cu -text -whitespace
+toolchains/llvm12/AUTHOR-LICENSE -whitespace
+toolchains/llvm12/LLVM-LICENSE.TXT -whitespace

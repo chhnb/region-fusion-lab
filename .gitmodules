@@ -1,0 +1,4 @@
+[submodule "third_party/darm"]
+	path = third_party/darm
+	url = https://github.com/chhnb/cgo22ae-darm-code.git
+	branch = region-fusion-llvm12

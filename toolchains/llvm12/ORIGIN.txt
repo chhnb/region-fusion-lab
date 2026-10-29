@@ -1,0 +1,9 @@
+Author repository: https://github.com/charitha22/cgo22ae-darm-code.git
+Author base: e9bc0540325ad9806313d34e84fc901496fd8be6
+Working fork: https://github.com/chhnb/cgo22ae-darm-code.git
+Working branch: region-fusion-llvm12
+Source location: third_party/darm (submodule, revision pinned by gitlink)
+LLVM12 Release with assertions, X86/NVPTX targets, clang enabled.
+Use rebuild-all.sh for a fresh full build; build.py is local-bootstrap-only.
+Migration originally rebuilt CFMelder against copied LLVM libraries.
+The current compiler changes and regression fixtures are owned by the fork.

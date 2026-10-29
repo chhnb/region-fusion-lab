@@ -1,0 +1,3 @@
+Compiler change audit moved to:
+third_party/darm/cfm_benchmarks/fusion-regressions/CHANGE-AUDIT.txt
+Inspect the submodule commit diff against the author revision in ORIGIN.txt.

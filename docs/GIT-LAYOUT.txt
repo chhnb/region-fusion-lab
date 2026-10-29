@@ -1,0 +1,18 @@
+Repository ownership
+
+Parent: https://github.com/chhnb/region-fusion-lab.git
+Owns search, scoring, case adapters, experiments and build entry points.
+
+Submodule: https://github.com/chhnb/cgo22ae-darm-code.git at third_party/darm
+Owns LLVM12/clang/BF/DaRM implementation and compiler regression fixtures.
+Working branch: region-fusion-llvm12, based on author cfm-rocm-4.0.
+The parent's gitlink pins a specific commit, not a moving branch.
+
+Compiler edits must be committed/pushed in the submodule first, then the parent
+records the updated gitlink. Do not keep a second authoritative source overlay.
+Author default branch is preserved. No force push is required.
+
+Use git clone --recurse-submodules, or git submodule update --init --recursive.
+Builds, experiments, virtual environments, local config and old migration snapshots
+are ignored. Existing local bootstrap data is optional and not needed for the
+fresh full build documented in README.rst.

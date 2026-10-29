@@ -1,0 +1,26 @@
+# Local environment and generated files
+/.venv/
+__pycache__/
+*.py[cod]
+*.so
+*.o
+*.a
+*.cubin
+*.ptx
+*.ncu-rep
+/core
+/core.*
+/runs/
+/config.json
+
+# Downloaded LLVM tree and local build products
+/toolchains/llvm12/source/
+/toolchains/llvm12/bootstrap/
+/toolchains/llvm12/build/
+/toolchains/llvm12/full-build/
+/toolchains/llvm12/bin/
+/toolchains/llvm12/archives/
+/toolchains/llvm12/build-recipe.json
+
+# Historical executable alias
+/vendor/opt-adjacent

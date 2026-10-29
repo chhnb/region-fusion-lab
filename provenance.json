@@ -1,0 +1,9 @@
+{
+  "compiler_source": "third_party/darm",
+  "repository": "https://github.com/chhnb/cgo22ae-darm-code.git",
+  "upstream": "https://github.com/charitha22/cgo22ae-darm-code.git",
+  "revision": "pinned by parent gitlink",
+  "changes": "third_party/darm/cfm_benchmarks/fusion-regressions/CHANGE-AUDIT.txt",
+  "configuration": "config.json or config.example.json",
+  "description": "Author LLVM12 with reviewed local CFMelder fixes. BF and DARM share the engine; not pristine upstream."
+}
