@@ -11,7 +11,8 @@ from .cost import Program,subset_scenarios,UnsupportedCost
 from .tree import parse_choices
 
 class CompositionalSession:
-    def __init__(self,out,scorer,case,generator):
+    def __init__(self,out,scorer,case,generator,first=0,last=None):
+        self.first=first;self.last=case.option_count-1 if last is None else last
         self.out=Path(out);self.scorer=scorer;self.case=case;self.generator=generator
         self.ctx=case.prepare(out);generator.configure(out,case,self.ctx);self.groups={};self.trials={};self.states={}
         self.initial=tuple(MergeHistory(i,i) for i in range(case.option_count))
@@ -21,7 +22,7 @@ class CompositionalSession:
         G.dump(self.out/'scenarios.json',dict(origin='static case-defined scenarios; NOT measured profile',scenarios=self.scenarios))
         self.artifacts=self.ctx['artifacts'];self.attempts=[]
     def key(self,state):return '|'.join(t.key for t in state)
-    def pairs(self,state):return [('choice.0',i) for i in range(len(state)-1)]
+    def pairs(self,state):return [('choice.0',i) for i,(a,b) in enumerate(zip(state,state[1:])) if self.first<=a.lo and b.hi<=self.last]
     def group(self,t):
         if t.key in self.groups:return self.groups[t.key]
         left,right=self.group(t.left),self.group(t.right)
@@ -46,7 +47,7 @@ class CompositionalSession:
         src+='}\n';ir=G.compile_src(d,'dispatch',src,self.case.case_key)
         G.command(d,'link',[G.T/'llvm-link',c['kernel_ir'],ir,*[g['module'] for g in groups],'-S','-o',d/'linked.ll'])
         # Same ordinary optimization for before/after cost scope. Preserve helper as root.
-        G.command(d,'cost',[G.T/'opt',d/'linked.ll','-always-inline','-O3','-internalize','-internalize-public-api-list='+self.case.helper,'-globaldce','-verify','-S','-o',d/'cost.ll'])
+        G.command(d,'cost',[G.T/'opt',d/'linked.ll','-internalize','-internalize-public-api-list='+self.case.helper,'-globaldce','-always-inline','-O3','-verify','-S','-o',d/'cost.ll'])
         row={'key':key,'dir':str(d),'groups':[[t.lo,t.hi] for t in state]};self.states[key]=row;return row
     def evaluate(self,state,pair,version):
         owner,i=pair;a,b=state[i:i+2];t=a.join(b);row={'id':f'{owner}:{a.key}+{b.key}','owner':owner,'index':i,'version':version,'state_key':self.key(state),'history':t.key,'dependencies':[self.key(state)],'status':'generation_failed'}
@@ -55,6 +56,8 @@ class CompositionalSession:
         new=state[:i]+(t,)+state[i+2:]
         f=ScoreInput(self.group(a),self.group(b))
         if self.scorer.name=='experimental-ir-net-cost-v0':
+            if not self.scenarios:
+                row.update(status='unsupported_cost',reason='case provides no supported static scenarios');return row
             try:
                 before=self.assemble(state);after=self.assemble(new)
                 programs=[Program((Path(x['dir'])/'cost.ll').read_text(),self.case.helper) for x in [before,after]]

@@ -79,10 +79,11 @@ by a supposedly successful baseline result.
 Scope and limitations
 ---------------------
 
-The executable GPU adapter currently supports SRAD kernel2's four-way choice.
+Executable GPU adapters currently support SRAD kernel2's four-way choice and
+TPACF's32-way classifier shared by its two kernels.
 Nested multiway representation and depth-independent scheduling have tests, but
-arbitrary nested LLVM transformation, RegionInfo discovery and TPACF integration
-are not yet implemented. New cases need legality-preserving adapters and oracles.
+arbitrary nested LLVM transformation and RegionInfo discovery are not yet
+implemented. New cases need legality-preserving adapters and oracles.
 
 The current session composes extracted helpers; it is not full-function contextual
 trial generation. Original and matched-helper controls remain separate comparisons.
@@ -101,3 +102,17 @@ candidate behavior relative to upstream; see the audit in the submodule.
 Tests and preserved local evidence validate the migrated CFMelder build. They do
 not establish correctness for every CFG or a performance advantage. The known
 SRAD nine-way full automatic DaRM PHI assertion is not fixed by this migration.
+
+TPACF
+-----
+
+    python3 run.py build --case tpacf --first 0 --last 3 --out runs/tpacf-small
+    .venv/bin/python compare.py runs/tpacf-small --validate-only
+    python3 run.py build --case tpacf --skip-enumeration --out runs/tpacf-all
+    .venv/bin/python compare.py runs/tpacf-all
+
+The range constrains both greedy and exhaustive policies, preserving every option
+outside it.32-way full enumeration is rejected before compilation by default.
+TPACF uses deterministic synthetic inputs, not the official astronomy catalog.
+Its primary BF/DaRM controls use the same prepared helper as our algorithms;
+source_original is separately labelled. See cases/tpacf/README.rst.

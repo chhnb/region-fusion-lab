@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/ORNL/HeCBench",
+  "commit": "6f44356a3ddc6ac7dbf5f626c671ed1638c17374",
+  "user_master_ACF_kernel_matches_pinned": true,
+  "files": [
+    "ACF_kernel.cu",
+    "README"
+  ]
+}

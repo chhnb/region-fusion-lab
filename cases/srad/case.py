@@ -9,6 +9,7 @@ class SRAD4:
     case_key='srad2'
     helper='srad_decide'
     kernel='srad_cuda_2'
+    default_size=4096
     option_count=4
     gpu_module='cases.srad.gpu'
     def prepare(self,out):return prepare(out)
