@@ -1,0 +1,122 @@
+分组、组内共享与条件合并：方案整理
+
+1. 先明确术语
+“组内共享计算”是变换目标：互斥路径中兼容的操作，由共同的指令执行，差异通过
+参数选择、结果选择或仍然带条件的片段表示。DARM是实现这一目标的一种通用自动方法。
+手工按TPACF规律生成“先选code、再执行shift/add”的实现也属于计算融合/公共计算提取，
+但没有调用DARM时，不能把它称为DARM的算法结果。
+
+共享的是指令和控制路径，并非让不同线程共用同一个数值结果。
+每个线程仍计算自己的值。两侧都有活跃线程时，共同warp指令可能替代原来的分侧执行；
+如果warp只走一侧，新增select/控制反而可能增加工作。静态少一份代码也不保证运行更快。
+
+2. 一个TPACF例子
+原来：
+  if (p) accum += (124u << shift);
+  else   accum += (120u << shift);
+共享形式：
+  unsigned code = p ? 124u : 120u;
+  accum += (code << shift);
+
+这里选择的是不同参数code，公共shift/add只保留一份。
+DARM通过指令对齐、选择操作数、保留不匹配片段和修复SSA/CFG寻找这种共享。
+专用模板在确认所有路径符合相同操作模式后，可以直接生成这种形式。
+DARM实际结果不保证恰好是上面的规范形式，也不保证共享全部操作。
+纯谓词化如果只是把两边计算都执行、最后选结果，也不等同于已经共享算术。
+
+3. 必须拆开的五个配置维度
+A. 分区：哪些相邻原始路径归为一组。
+   例如width2：[0,1]|[2,3]|...；width4：[0..3]|[4..7]|...。
+B. 顺序：在一个多路径组内如何执行配对。
+   例如四路的((0,1),(2,3))与(((0,1),2),3)。这是融合历史，不是把原始区域树改成二叉树。
+C. 融合实现：调用DARM，还是使用经过合法性检查的参数化公共计算模板。
+D. 条件实现：保留有序条件、区间内OR、条件缓存，或满足前提时用聚合阈值。
+E. 共享范围：只在各组内部共享，还是整个Choice只保留一次最终更新。
+
+循环展开设置另作为公共编译配置，不能随着group名字悄悄改变。
+“group4”只说明宽度，不能唯一描述一个变换方法。
+
+4. 已检查的旧TPACF尝试分别是什么
+- 初始pairs/group2：用两个原始条件的OR决定是否进入组；组内选code；组内一次更新。
+- pairs-max/group2：以上结构加pairbounds预计算，组入口由OR换成一次阈值比较。
+- group4h：先合成两个pair，再选pair的边界和编码参数，共享后续比较/编码/更新；
+  还使用pairbounds与parentbounds预计算。它是TPACF专用参数化共享，不是直接调用DARM。
+- recursive group8/16/32：上述递归参数选择方案推广到更大宽度。
+- no-unroll grouped/prefix/ROCm-style尝试：先确定code，最后在整个Choice外只执行
+  一次temp2 += (code << shift)。其中group2/group4主要改变选择结构，公共更新范围
+  已经覆盖整个Choice；不能把收益都解释为“只在两个或四个分支内共享”。
+- groupN_darm这类名称必须核对实际调用：如果先手工改结构，再跑DARM，就是两个阶段，
+  不能省略前一阶段而标成纯DARM。
+
+依据旧脚本：prepare_tpacf_pairs.py、build_tpacf_pairmax.py、build_tpacf_hier_groups.py、
+build_tpacf_sweeps.py、build_tpacf_prefix_groups.py、build_tpacf_rocm_groups.py。
+这些源码实验存在unroll/no-unroll等不同配置，旧cubin不能直接混入新的共同IR对比。
+
+5. 条件合并是独立优化，不等于计算融合
+当前框架实现的只是：组[a..b]使用该区间内原始条件的有序OR，保持first-match顺序；
+已经修复不应带入p0..p(a-1)的问题。尚未实现pairbounds/parentbounds预计算或阈值归并。
+
+对纯比较p=(x<a)、q=(x<b)，有限数情形：
+  (x<a) || (x<b)  等价于  x<max(a,b)。
+实现中必须显式处理NaN、无穷、signed zero和比较谓词语义，不能随便用std::max替换。
+这个最大阈值只能回答“是否属于这一组”，不能决定组内哪条路径优先。
+如果p、q都成立，仍必须选择原来靠前的路径。
+包含最终else的末组是fallback，不需要凭空增加入口阈值。
+
+在kernel内重新算max不一定有利；旧方案将边界提前算好，涉及输入准备和额外常量数据。
+因此方案必须声明辅助数据的产生、上传、原边界变化后的更新与成本口径。
+同时报告kernel-only和需要时包含准备/传输的成本，不能把预计算默认视为免费。
+这个条件化简只适用于能证明相应关系的谓词，不能直接推广到任意if或带副作用条件。
+
+6. 如何接入当前框架（建议接口；尚非全部实现）
+先保留一轮实验只选一种融合实现，不立即扩展为每个候选搜索多种生成器。
+
+VariantSpec（概念配置，非现有CLI参数）：
+  partition: fixed_width / explicit_intervals / greedy / exhaustive
+  schedule: left_fold / balanced / greedy / enumerated
+  realizer: darm / parameter_factor
+  predicate: interval_or / cached_predicates / precomputed_max
+  sharing_scope: group / choice
+  pipeline: common_frontend, minimal_intermerge_cleanup, common_final_O3, unroll_policy
+
+模块分工：
+- fusion中的分区/调度器：负责分组与配对顺序，不生成TPACF公式。
+- backends中的融合实现：DARM与参数化共享各自实现合法性检查和生成方案。
+- case：提供原始路径、入口上下文、可识别的公共计算模式、条件约束和数值oracle。
+- 条件变换模块：生成组入口及内部选择谓词；需要时返回辅助输入数据的明确接口。
+- experiments：组合上述配置、统一验证/计时、记录每个因素；不按昵称猜测含义。
+
+参数化模板若暂时只支持TPACF，就显式标为TPACF专用后端，不伪装成任意CFG融合算法。
+组内DARM失败时不能偷偷切换模板后仍标成DARM成功；允许的fallback必须是独立配置并记录。
+将来才考虑把不同realizer的方案同时放进候选队列，这不属于当前第一步。
+
+7. 参数化公共计算模板的合法性
+识别共同操作图，例如unsigned add(shift(code, shift), accum)，仅code随路径不同。
+共享参数不应改变每线程副作用顺序、访问合法性、浮点求值规则或执行域。
+不能为了填齐一侧缺失操作，任意补一个“数学上为零”的表达式：
+例如FP的0*NaN不是0；整数移位也需要合法shift范围。TPACF实际shift由j=0..3给出。
+只能在匹配成功并验证这些前提后，生成选择参数加公共操作的IR。
+不匹配的代码应保留原执行条件，或明确拒绝该模板。
+
+8. 初步对照矩阵
+第一轮固定原始unroll配置、group内共享和interval_or条件，只比较：
+  fixed width2 + DARM
+  fixed width4 + balanced DARM
+  fixed width2 + TPACF参数化共享
+  fixed width4 + 递归参数化共享
+  当前全规模greedy DARM
+  自动BF、自动DARM及未变换对照
+
+第二轮才固定同一分区/共享方式，比较interval_or、cached和precomputed_max。
+Choice-wide公共更新另列一轮，避免把共享范围扩大混成group宽度的收益。
+小区间暴力枚举仍要求每个请求区间完整合并；不同实现分别记录可行集合。
+
+9. 公平对比与接入状态
+所有正式方法从同一公共初始IR开始；新模板应从其已识别结构生成IR，不能拿旧源码
+独立-O3编译的产物直接当成同起点方法。公共最终O3、目标架构和浮点选项保持一致。
+历史源码版可以作为legacy对照，但要单独标明准备流程差异。
+
+已经实现：DARM配对生成、全局贪心、小区间划分/顺序枚举、区间内OR、BF/DARM自动对照。
+目前固定平衡顺序只在cleanup审计工具中使用，尚无通用fixed-width CLI。
+待实现：通用固定分组入口、TPACF参数化共享后端、条件缓存/聚合阈值策略及辅助数据接口。
+本文是整理后的接入设计，不宣称这些旧方案已经迁入可执行框架。

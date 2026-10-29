@@ -118,3 +118,11 @@ outside it.32-way full enumeration is rejected before compilation by default.
 TPACF uses deterministic synthetic inputs, not the official astronomy catalog.
 Its primary BF/DaRM controls use the same prepared helper as our algorithms;
 source_original is separately labelled. See cases/tpacf/README.rst.
+
+Additional grouping schemes
+---------------------------
+
+See docs/GROUP-SHARING-DESIGN.txt for the separation of partition, merge order,
+computation-sharing implementation, predicate transformation and sharing scope.
+Legacy group2/group4 names combine different choices; parameterized templates
+and precomputed-bound strategies are design proposals, not implemented CLI modes.
