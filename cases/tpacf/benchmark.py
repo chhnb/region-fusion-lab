@@ -17,12 +17,13 @@ def compare(run,args):
         else:seen[identity]=name;names.append(name)
     kernels=['ACFKernel','ACFKernelSymm'];validate_only=getattr(args,'validate_only',False)
     dump(out/'plan.json',dict(names=names,aliases=aliases,input='seed20261021 synthetic isotropic points, source-style boundary configuration; NOT official catalog',roles={'original':'common prepared unmerged control','source_original':'different preparation diagnostic, not the primary algorithm baseline'},points=N,grid=[128,128],block=128,shared=3072,kernels=kernels,scope='kernel only; no histogram/end-to-end timing',mode='validation' if validate_only else 'single-launch screening',contexts=args.contexts,blocks=args.blocks,all_samples_retained=True))
+    fixtures=json.loads((d/'plan.json').read_text()).get('validation_fixtures',['isotropic','edges','wide','unordered'])
     checks=[];samples=[];telemetry=[]
     for ctx in range(1 if validate_only else args.contexts):
         gpu=GPU(d,names)
         try:
             if ctx==0:
-                for fixture in ['isotropic','edges','wide','unordered']:
+                for fixture in fixtures:
                     x,y,b=inputs(fixture);gpu.configure(x,y,b)
                     for kernel in kernels:
                         expected=oracle(x[:128],x[:128] if kernel.endswith('Symm') else y[:128],b,kernel.endswith('Symm'))

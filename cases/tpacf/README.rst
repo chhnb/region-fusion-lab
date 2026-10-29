@@ -134,3 +134,16 @@ Reproduce the controlled audit after building local-guard runs with the two mode
     python3 -m cases.tpacf.audit_cleanup --base runs/minimal \
         --o3-base runs/o3 --out runs/cleanup-audit
     .venv/bin/python compare.py runs/cleanup-audit --contexts 2 --blocks 2
+
+Historical group2 equivalence audit
+----------------------------------
+
+    python3 -m cases.tpacf.audit_group2 --base runs/tpacf-minimal-greedy-v3 \
+        --out runs/group2-audit --canonical-tail
+    .venv/bin/python compare.py runs/group2-audit --contexts 2 --blocks 2
+
+The audit rebuilds the historical unrolled pairs-max source and compares it with
+fixed-pair DaRM plus the same precomputed thresholds, including a matched-helper
+control. The last4/0 pair and actual unroll differences are isolated explicitly.
+The optional tail rewrite is a diagnostic using TPACF's bounded shifts, not a
+new default fusion policy. See docs/TPACF-GROUP2-EQUIVALENCE.txt.

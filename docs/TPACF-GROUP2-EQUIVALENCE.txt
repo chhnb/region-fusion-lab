@@ -1,0 +1,102 @@
+旧group2 与 固定group2+DARM+条件合并 的验证（2026-10-30）
+
+结论
+计算/分箱语义一致；但未经进一步规范化的整个IR和机器码并非逐字相同。
+前15对已经完全实现“选code -> shift -> add”；最后4/0对的预优化形式不同。
+在同一helper流程中，仅规范化这一个尾组，就得到与旧公式完全相同的cubin。
+旧源码直接编译与helper流程之间还存在实际循环展开差异，不能混成DARM能力差异。
+
+一、这里的“旧group2”是哪一版
+选用unrolled group2/pairs-max：16个相邻两路组；15个入口阈值由原边界fmax预计算；
+各组内按第一个原始条件选择code，最后一组是fallback。
+不是no-unroll、prefix或ROCm-style另一种共享范围的版本。
+存档源码在cases/tpacf/legacy/group2_max.cu，重建公式与存档源码除空白外完全一致。
+本次用当前LLVM12及相同最终O3/llc/ptxas参数重新编译，没有混用旧cubin。
+
+二、条件合并的语义
+对组中的两个原始条件：
+  (temp < a) || (temp < b)
+用预计算M代替组入口：
+  temp < M
+M使用与旧np.fmax相同的number-preferring NaN行为；比较仍为ordered '<'。
+最大阈值只回答是否进入组，组内仍检查原第一个条件，绝不按最大阈值选择路径。
+包含else的最后一组不生成第16个阈值。
+
+729种x/a/b特殊值组合检验入口条件一致，覆盖NaN、正负无穷、正负零、正负最小
+subnormal和有限数。辅助常量在每次输入边界更新时重新计算、上传。
+额外常量为15个double，即120字节。计时不包括其准备和上传，不是端到端收益。
+
+三、实验版本
+legacy_direct_max：旧源码直接编译，作为准备流程诊断。
+template_helper_max：旧公式移入当前公共helper流程。
+darm_helper_max：同一组叶IR，固定16对，真正调用DARM融合，再使用相同pairbounds。
+darm_helper_or：相同DARM组，但组入口仍用局部OR，作为条件合并对照。
+original/native：公共未融合对照与独立NVCC数值参考。
+
+template_helper_max和darm_helper_max共用prepared kernel、同一分组、pairbounds、
+目标架构、FP选项及最终编译流程；没有按数值结果事后选择输入或删除样本。
+legacy_direct_max与helper版本的初始准备不同，不能将其时间差全部归因于DARM。
+
+四、DARM实际共享到了哪里
+16对全部成功融合。前15对每对都是：
+  code = select(original_first_predicate, high_code, low_code)
+  out = accum + (code << shift)
+它们各自只含1个select、1个shift、1个add、1个store。
+
+最后一对4/0：原始零分支在叶IR准备时已变成直接返回accum。
+DARM的结果经过普通优化后相当于：
+  out = accum + select(p, 4 << shift, 0)
+旧公式是：
+  out = accum + (select(p, 4, 0) << shift)
+在TPACF的合法shift范围内数值相同，但IR表达不同。
+这一个差异使helper级O3不能把所有组的shift统一移到汇合处：
+  template_helper_max：最终helper中1条shift、1条add、1条store。
+  darm_helper_max：最终helper中16条shift、1条add、1条store。
+这里说的是静态IR条数，不能直接当成每线程执行次数。
+
+五、单点因果对照
+只将DARM结果中g_30_31的尾部规范化为select(p,4,0)->shift->add，其他15对、
+分发条件、内联与后端完全不动：
+  规范化后的helper主体 == template_helper_max主体；
+  规范化后的整个cubin == template_helper_max整个cubin，逐字节相同。
+这是诊断性改写，不是声称未经修改的DARM已经自动做了它；未启用到默认生成器。
+
+该改写利用TPACF shift取0/8/16/24的事实。对任意未知shift不能无条件这样改：
+原来的select可以屏蔽未选中shl的poison，而外提后的shl在shift>=32时可能产生poison。
+因此不能把这个诊断直接升级为无条件通用LLVM优化。
+
+六、为什么旧源码直接编译仍与helper版本不同
+观察ACFKernel最终IR：
+  legacy_direct_max有192条静态fmul，循环索引每轮增加64，保留两轮迭代。
+  template_helper_max和darm_helper_max有384条静态fmul，展开全部128个点。
+两边#pragma设置相同，但前端看到的函数体大小和调用结构不同，实际展开决策不同。
+因此“相同pragma”不等于“相同实际展开程度”。
+此处静态计算量翻倍并不表示动态点对数翻倍；原版的同一循环体会执行两轮。
+
+静态SASS指令数（含对齐NOP）及寄存器：
+                         ACF指令/寄存器     Symm指令/寄存器
+legacy_direct_max         6448 /25          13168 /24
+template_helper_max      10984 /30          22512 /26
+darm_helper_max          12680 /30          25616 /26
+它们未经尾部规范化时完整cubin和两kernel的SASS均不同。
+不能据此声称旧手工版本拥有DARM无法实现的两路公共计算。
+
+七、正确性与计时
+两个kernel均通过：小网格CPU完整打包输出、保护区与未启动区域检查；
+普通球面、阈值及相邻值、NaN/Inf输入、全分箱覆盖、乱序边界、非有限边界；
+16384点原始网格下，与NVCC逐字比较全部输出一致。
+尾部规范化产物因cubin和辅助输入描述与已验证模板完全相同，复用该验证证据。
+25项轻量测试通过。独立记录200个kernel计时样本，未根据性能筛选上述版本。
+本轮主要回答等价性，未将小幅时间差解释为确定的算法优劣。
+
+复现
+先有一个当前TPACF基础运行，然后：
+  python3 -m cases.tpacf.audit_group2 --base runs/tpacf-minimal-greedy-v3 \
+      --out runs/new-group2-audit --canonical-tail
+  .venv/bin/python compare.py runs/new-group2-audit --contexts 2 --blocks 2
+需要独立运行尾部诊断验证时：
+  .venv/bin/python compare.py runs/new-group2-audit/tail-diagnostic --validate-only
+
+本次本地证据：runs/tpacf-group2-equivalence-v1。
+analysis/equivalence.json、analysis/helper-diff.txt、各版本post.ll/SASS、comparison及tail-diagnostic。
+产物和计时样本不提交Git；源码、辅助输入实现和复现脚本提交。

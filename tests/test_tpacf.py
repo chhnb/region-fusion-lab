@@ -1,9 +1,10 @@
-import unittest,re,subprocess,sys,tempfile
+import unittest,re,subprocess,sys,tempfile,math
 from pathlib import Path
 from cases.registry import load
 from cases.tpacf.prepare import classification_source,PATTERN,interval_predicate
 from fusion.search import MergeHistory,partitions,histories
 from fusion.enumeration import exhaustive
+from cases.tpacf.conditions import pair_bounds,PAIR_INDICES
 
 class TPACFTests(unittest.TestCase):
     def test_32way_structure_and_three_sites(self):
@@ -41,6 +42,14 @@ class TPACFTests(unittest.TestCase):
                     groups=tuple(MergeHistory(i,i) for i in range(4))+forest+tuple(MergeHistory(i,i) for i in range(8,32))
                     chosen=next(t for t in groups if pred(t,bits))
                     self.assertEqual(execute(chosen,bits),expected)
+    def test_pairmax_preserves_ordered_or_for_special_values(self):
+        tiny=math.nextafter(0.,1.)
+        values=[float('nan'),-float('inf'),-1.,-tiny,-0.,0.,tiny,1.,float('inf')]
+        for a in values:
+            for b in values:
+                bounds=[0.]*63;bounds[30]=a;bounds[29]=b;merged=pair_bounds(bounds)[0]
+                for x in values:self.assertEqual((x<a) or (x<b),x<merged)
+        self.assertEqual(len(PAIR_INDICES),15);self.assertEqual(PAIR_INDICES[-1],(2,1))
     def test_full_enumeration_rejected_before_build(self):
         root=Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as d:

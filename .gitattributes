@@ -3,3 +3,4 @@ cases/srad/srad_kernel.cu -text -whitespace
 toolchains/llvm12/AUTHOR-LICENSE -whitespace
 toolchains/llvm12/LLVM-LICENSE.TXT -whitespace
 cases/tpacf/ACF_kernel.cu -text -whitespace
+cases/tpacf/legacy/group2_max.cu -text -whitespace
