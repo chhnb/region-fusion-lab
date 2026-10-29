@@ -120,3 +120,8 @@ Choice-wide公共更新另列一轮，避免把共享范围扩大混成group宽�
 目前固定平衡顺序只在cleanup审计工具中使用，尚无通用fixed-width CLI。
 待实现：通用固定分组入口、TPACF参数化共享后端、条件缓存/聚合阈值策略及辅助数据接口。
 本文是整理后的接入设计，不宣称这些旧方案已经迁入可执行框架。
+
+两路例子的实测补充
+124u/120u的示例已经直接验证：DARM与BF在最终O3之前就得到与手写模板相同的
+select(code)->shift->add主体。不能以这个例子宣称模板比DARM共享得更充分。
+详见TPACF-PAIR-SHARING-VERIFICATION.txt及可复现脚本cases/tpacf/verify_pair_sharing.py。

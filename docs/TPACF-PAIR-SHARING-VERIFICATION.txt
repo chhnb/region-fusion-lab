@@ -1,0 +1,56 @@
+两路参数选择共享验证（2026-10-29）
+
+结论：对124u/120u这两个同形分支，DARM完全能直接生成所讨论的形式。
+BF也能。它们的原始融合输出在没有执行最终O3前，就与手写select(code)->shl->add
+模板的主体一致（仅SSA命名不同）。当前真实TPACF的R0+R1也已是这个形式。
+因此这个例子不能作为“专用参数化共享比DARM更强”的证据。
+
+共享输入
+  if(p) out = accum + (124u << shift);
+  else  out = accum + (120u << shift);
+同一份NVPTX目标LLVM IR经公共verify准备，分别运行BF/DARM，阈值0.2。
+未融合对照保留相同输入。模板是预先指定的期望IR，不作为已测性能优胜方案。
+
+BF/DARM均实际meld一次，直接输出：
+  %code = select i1 %p, i32 124, i32 120
+  %delta = shl i32 %code, %shift
+  %value = add i32 %delta, %accum
+  store i32 %value, i32* %out, align 4
+原始条件分支消失；只有1个select、1个shl、1个add、1个store。
+最终O3后，两者依然与模板主体相同。这个简单双路例子中，未融合对照单独执行
+O3也得到同样主体，因此它甚至不能证明DARM相对普通优化有独有收益。
+
+边界对照：4u/0u
+A. 两边输入IR都保留shl/add（包括0<<shift和accum+0）：
+   BF/DARM仍直接生成select(p,4,0)->一次shl->一次add，最终与模板相同。
+B. 输入IR的零分支已被普通优化折成直接返回accum：
+   BF/DARM仍能合并；原始结果含两个嵌套select，最终O3得到：
+     accum + select(p, 4u<<shift, 0u)
+   而模板最终为：
+     accum + (select(p,4u,0u)<<shift)
+   两者都只有一次select/shift/add，输出相同，但数据流位置不同。
+   这里没有测到或声称哪一个更快；这种表示差异可能影响后续多路对齐，需另行验证。
+
+正确性
+每个case的8种IR版本（原始/BF/DARM/模板，各自优化前后）都编译成CPU函数。
+覆盖p的两种取值、全部合法32位移位量0..31，以及零、unsigned边界和64个固定随机accum。
+每个版本4416次检查；3个case合计105984次比较全部满足unsigned模2^32参考公式。
+不测试shift>=32，因为它不在这里定义的合法输入域；TPACF实际只使用0/8/16/24。
+这是具体IR变换与标量正确性验证，不是GPU性能基准。
+
+真实case旁证
+已有GPU验证过的TPACF R0+R1最小清理IR（未跑逐轮O3）也是：
+  p = temp < binbounds[30]
+  code = select(p,124,120)
+  out = accum + (code<<shift)
+对应局部文件：runs/tpacf-local-guards-balanced-mincleanup-v2/group-0-1/after.ll。
+
+复现
+  python3 -m cases.tpacf.verify_pair_sharing --out runs/new-pair-verification
+结果记录在summary.json，以及各case的methods/{original,bf,darm}/{meld,final}.ll。
+本次证据：runs/tpacf-pair-sharing-verification。运行产物不提交到Git。
+
+设计修正
+“参数化共享”是DARM可以生成的结果形式，不应当被描述成DARM之外独有的新能力。
+接入模板方法时，这个两路例子应作为等价性基线；研究重点应放到更复杂的多路
+结构、预优化造成的表示差异、条件归并与最终资源/执行成本，不能预设模板更优。
